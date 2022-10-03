@@ -1,6 +1,5 @@
 package cz.aetos.java.jar;
 
-import lombok.Data;
 import lombok.Getter;
 
 import java.io.File;
@@ -14,53 +13,80 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.BiFunction;
 import java.util.stream.Stream;
 
-@Data
+// FIXME co cahce na data?
+//@Data
+@Getter
 public class Jar {
 
-    @Getter
-    private final Path path;
+    private boolean cache;
+    private final static String ROOT_PATH = "/";
+    private final static String CLASSES_PATH = "/BOOT-INF/classes";
+    private final static String LIB_PATH = "/BOOT-INF/lib";
+    private final FileSystem fileSystem;
+    private Path jarPath;
 
-    private FileSystem fileSystem;
-
-    @Getter
+    // TODO ?
     private List<Path> files = new ArrayList<>(100);
 
+    // TODO ?
     private URI rootUri;
 
     /**
-     * Read load current running JAR
-     * @return
+     *
+     * @param fileSystem
+     */
+    public Jar(FileSystem fileSystem) {
+        this.fileSystem = fileSystem.getPath(ROOT_PATH).getFileSystem();
+        this.jarPath = this.fileSystem.getPath(ROOT_PATH);
+    }
+
+    /**
+     * Load current running JAR as filesystem.
+     * @return Jar metamodel internal representation - {@link Jar}
      */
     public static Jar loadCurrentJAR() throws IOException, URISyntaxException {
-//        String jarName = byGetProtectionDomain(ADPApplication.class);
-        URL rootUrl = Objects.requireNonNull(Thread.currentThread().getContextClassLoader().getResource("/"));
+        Jar jar;
+        URL rootUrl = Objects.requireNonNull(Thread.currentThread().getContextClassLoader().getResource(ROOT_PATH));
         try (FileSystem fileSystem = FileSystems.newFileSystem(rootUrl.toURI(), Collections.emptyMap())) {
-            Jar a =  new Jar(fileSystem.getPath("/"));
-            Jar b =  new Jar(fileSystem.getPath("/BOOT-INF/classes"));
-
-            log(a.isJar());
-            log(b.isJar());
-
-            logFileWalks(a.getPath());
-            logFileWalks(b.getPath());
-
-            return a;
+            jar = new Jar(fileSystem);
+            assert jar.isJar();
+            logFileWalks(jar.files(LIB_PATH, CLASSES_PATH));
+            return jar;
         }
     }
 
-    public static void logFileWalks(Path path) throws IOException {
-        Files.walk(path).forEach(Jar::log);
+    /**
+     *
+     * @param pathStream
+     */
+    private static void logFileWalks(Stream<Path> pathStream){
+        pathStream.forEach(Jar::log);
+    }
+
+    private Stream<Path> files(String... paths) {
+
+        // filter
+        BiFunction<FileSystem, String, Stream<Path>> files = (fileSystem, path) -> {
+            try (Stream<Path> pathStream = Files.walk(fileSystem.getPath(path))) {
+                return pathStream;
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        };
+
+        return Arrays.stream(paths).flatMap(p -> files.apply(fileSystem, p));
     }
 
     private static String byGetProtectionDomain(Class clazz) throws URISyntaxException, IOException {
         URL url = clazz.getProtectionDomain().getCodeSource().getLocation();
-        try (FileSystem fileSystem = FileSystems.newFileSystem(url.toURI(), Collections.emptyMap())) {
-//            Path jarPath = Paths.get(url.toURI());
+        try (FileSystem fileSystem = FileSystems.newFileSystem(url.toURI(), Collections.emptyMap())) {;
             Path jarPath = fileSystem.getPath(url.getPath());
             assert new File(jarPath.toString()).exists();
             return Paths.get(url.toURI()).toString();
@@ -68,15 +94,36 @@ public class Jar {
     }
 
     private boolean isJar() {
-        return "jar".equals(getPath().getFileSystem().provider().getScheme());
+        return "jar".equals(getJarPath().getFileSystem().provider().getScheme());
     }
 
-    public String version() throws IOException {
-        // FIXME POUZE TUTO METODU UDLĚAT LUKÁŠI, OSTATNÍ SERE PES TEDKA, TO NECH NA PRASÁKA
-        Stream<Path> pathStream = Files.walk(path).filter(p -> p.toString().matches(".*-git.properties$"));
+    public String componentsVersion() {
+        try {
+            // FIXME na prasaka
+            try (FileSystem fs = FileSystems.newFileSystem(jarPath.toUri(), Collections.emptyMap())) {
+                Path path = fs.getPath(CLASSES_PATH);
+                try (Stream<Path> pathStream = Files.walk(path).filter(p -> p.toString().matches(".*-git.properties$"))) {
+                    Path gitFile = pathStream.findFirst().get();
+                    System.out.println(gitFile.getFileName().toString());
+                    // read content of file
+                    // FIXME krome verze vratit i git hash
+                    return Files.lines(gitFile).filter(l -> l.startsWith("git.build.version")).findFirst().orElse("version missing");
+                }
+            }
+        } catch (Throwable e) {
+            System.out.println("SOMETHING WRONG WHILE GETTING VERSION OF COMPONENT");
+        }
 
-        return "version FIXME";
+        return "UNKNOWN";
     }
+
+//    public String version(String artifactId, String groupId) {
+//        return findArtifact(artifactId, groupId);
+//    }
+//
+//    private Artifact findArtifact(String artifactId, String groupId) {
+//
+//    }
 
 //    public String jarFileName() {
 //        ((ZipFileSystem) jar.getPath().getFileSystem()).getRootDir()
@@ -97,6 +144,11 @@ public class Jar {
 
 //            return new Jar();
 
+
+    public Artifact getArtifact(ComponentsEnum componentsEnum) {
+
+        return new Artifact();
+    }
 
     public static void log(String s) {
         System.out.println(s);
